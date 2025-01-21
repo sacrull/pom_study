@@ -1,3 +1,14 @@
+# 0. Combine runs
+```sh
+cd ~/pom_study/01-16S-analysis/data
+ls run1 | sed 's/_.*//' | sort | uniq | while IFS= read -r line; do
+  cat ./run1/"$line"*R1*.fastq.gz ./run2/"$line"*R1*.fastq.gz ./run3/"$line"*R1*.fastq.gz ./run4/"$line"*R1*.fastq.gz > "$line"_R1.fastq.gz;
+done
+
+ls run1 | sed 's/_.*//' | sort | uniq | while IFS= read -r line; do
+  cat ./run1/"$line"*R2*.fastq.gz ./run2/"$line"*R2*.fastq.gz ./run3/"$line"*R2*.fastq.gz ./run4/"$line"*R2*.fastq.gz > "$line"_R2.fastq.gz;
+done
+```
 # 1. DADA2 Pipeline
 ```R
 #Load packages
@@ -12,8 +23,9 @@ set.seed(12349)
 #Set up paths
 setwd("/home/suzanne/pom_study/01-16S-analysis/01-read_processing")
 rawpath <- "/home/suzanne/pom_study/01-16S-analysis/data"
-fnFs <- sort(list.files(rawpath, pattern="_R1_001.fastq.gz", full.names=T))
-fnRs <- sort(list.files(rawpath, pattern="_R2_001.fastq.gz", full.names=T))
+fnFs <- sort(list.files(rawpath, pattern="_R1.fastq.gz", full.names=T))
+fnRs <- sort(list.files(rawpath, pattern="_R2.fastq.gz", full.names=T))
+
 sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
 head(sample.names, 50)
 paste("Number of input samples: ", length(sample.names))
@@ -63,6 +75,7 @@ retained
 # Learn error rates
 errF <- learnErrors(filtFs, multithread=T, random=T)
 errR <- learnErrors(filtRs, multithread=T, random=T)
+
 err.f.plt <- plotErrors(errF, nominalQ=TRUE) 
 pdf(paste("./img/", "error_plot.pdf", sep=""))
 err.f.plt
@@ -122,21 +135,26 @@ disown %1
 ```
 # 3. Assign taxonomy
 ```sh
-kraken2 --db ~/refdb/homd_16S \
+kraken2 --db ~/refdb/ezbio/kraken_ezbio \
   --threads 6 \
   --use-names \
   --output rep_set.kraken.out rep_set.fa \
   --unclassified-out rep_set.unclassified.out --confidence 0.01
 
 awk -F"\t" '{print $3}' rep_set.kraken.out | sed 's/^.*(//' | sed 's/taxid //' | sed 's/)//' > taxids
-sed "s/\t//g" ~/rna_dohmain/rpoc/database/rpoc/database/rankedlineage.dmp > rankedlineage.dmp
+
+#get lineage file
+sed "s/\t//g" ~/refdb/ezbio/kraken_ezbio/taxonomy/names.dmp > rankedlineage.dmp
 sort -t "|" -k 1b,1 rankedlineage.dmp > rankedlineage_sorted
-cat rankedlineage_sorted | sed 's/|\{2,\}/|/g' > rankedlineage_clean
-# add unclassified to taxonomy file
-sed -i '1 i\0|unclassified|' rankedlineage_clean
-sed 's/|/\t/' rankedlineage_clean | sed 's/ /_/g' >rankedlineage_clean2
+cat rankedlineage_sorted | sed 's/|\{2,\}/|/g' | sed 's/|/\t/' | sed 's/|.*//'> rankedlineage_clean
+
+grep ">" ~/refdb/ezbio/ezbiocloud_clean.fa | sed 's/_.*\t/\t/' | sed 's/>//' | sed 's/_Arch/Arch/'> ezbiocloud_id_taxonomy.txt
+python3 ranked_create.py
+sed -i '1i\1\troot|' rankedlineage_clean2
+sed -i '1i\0\tunclassified|' rankedlineage_clean2
+
 python3 lineages.py #output is lineage
-awk -F"\t" '{print $2}' lineage | awk -F\| '{s=$NF;for(i=NF-1;i>=1;i--)s=s FS $i;print s}' | sed 's/^|//' | sed 's/ /_/g' | sed 's/|/;/g' > taxonomy
+awk -F"\t" '{print $2}' lineage  | sed 's/ /_/g' | sed 's/|/;/g' | sed 's/;$//' > taxonomy
 # merge assemebleies ids and taxonomy
 awk '{print $2}' rep_set.kraken.out > asvids
 paste asvids taxonomy > taxonomy.txt
@@ -144,7 +162,27 @@ paste asvids taxonomy > taxonomy.txt
 grep "Bacteria" taxonomy.txt | grep -v "Bacteria$" | awk '{print $1}' > wanted.ids
 seqtk subseq rep_set.fa wanted.ids > rep_set.filt.fa
 grep "Bacteria" taxonomy.txt | grep -v "Bacteria$" > taxonomy_bac.txt
-python ~/bin/fix_taxonomy.py taxonomy_bac.txt > temp
+python3 ~/bin/fix_taxonomy.py taxonomy_bac.txt > temp
 mv temp taxonomy_bac.txt
 sed -i 's/;/\t/g' taxonomy_bac.txt
+```
+
+# For vince
+```sh
+#fixing headers
+paste -d ' ' <(grep '^>' rep_set.filt.fa) <(awk '{print $8}' taxonomy_bac.txt) > combined.txt
+awk '{print $1"_"$2}' combined.txt > headers.txt
+paste -d "\t" <(grep '^>' rep_set.filt.fa) headers.txt | sed 's/>//g '> names.txt
+seqkit replace -p "(.+)" -r '{kv}|$1' -k names.txt rep_set.filt.fa |sed 's/|.*//' > pom_species.fa
+awk '!/^>/ { printf "%s", $0; n = "\n" } /^>/ { print n $0; n = "" } END { printf "%s", n } ' pom_species.fa > temp
+mv temp pom_species.fa
+
+cp sequence_table.merged.txt pom_table.txt
+grep ASV pom_species.fa | sed 's/>//' | while read line; do
+    modified_line=$(echo "$line" | sed 's/_.*//')
+    sed -i "s/\b$modified_line\b/$line/g" pom_table.txt
+done
+
+python3 underscore.py pom_table.txt > temp
+mv temp pom_table.txt
 ```
