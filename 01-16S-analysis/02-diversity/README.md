@@ -255,8 +255,19 @@ plot_ordination(ps.dat.clr, ordcap, "samples", color="study_group") +
     scale_color_manual(values=utiCols)
 dev.off()
 system("~/.iterm2/imgcat ./bdiv_cap.uti_status.pdf")
-permanova_pairwise(otu_table(ps.dat.clr), grp=sample_data(ps.dat.clr)$study_group, method="euclidean") # check signficane
-permanova_pairwise(otu_table(ps.dat.clr), grp=sample_data(ps.dat.clr)$menopause, method="euclidean") # check signficane
+permanova_pairwise(otu_table(ps.dat.clr), grp=sample_data(ps.dat.clr)$study_group, method="euclidean", padj = "fdr") # check signficane
+permanova_pairwise(otu_table(ps.dat.clr), grp=sample_data(ps.dat.clr)$menopause, method="euclidean", , padj = "fdr") # check signficane
+```
+for estrogen treatment groups between rUTI
+```R
+ps.sub <- subset_samples(ps.dat, study_group == "pmw")
+# add category for estrogen treatment
+sample_data(ps.sub)$treatment_estrogen <- ifelse(grepl("estrogen", sample_data(ps.sub)$treatment, ignore.case = TRUE), "estrogen", "none")
+
+ps.sub.clr <- microbiome::transform(ps.sub, transform="clr", target="OTU")
+ordcap <- ordinate(ps.sub.clr, "CAP", "euclidean", ~treatment_estrogen)
+permanova_pairwise(otu_table(ps.sub.clr), grp=sample_data(ps.sub.clr)$treatment_estrogen, method="euclidean") # check signficane
+
 ```
 ## 5.3 Beta dispersion
 ```R
